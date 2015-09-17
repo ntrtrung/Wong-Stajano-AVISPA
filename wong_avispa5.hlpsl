@@ -1,0 +1,212 @@
+%%Wong Stajano Protocol - OOB Transformation
+% ( F: hash function, Ks: pre-shared key, ACK: confirm message)
+% ( attacker knowledge: G, Hash, A, B)
+%
+% A->B : Ga
+% B->A : Gb.h(Ga.Gb.Rb.Kb)
+
+% A->B : Rat.{F(ACK.Rat)}_Ks
+% B->A : Rbt.F(Rat.Rbt)
+% A->B : ACK.{F(ACK.Rat.Rbt)}_Ks
+
+% B->A : Rb.{F(Rb),Rbt2}_Ks
+% A->B : {Rbt2,Rat2,h(Rb),A}_KS
+% B->A : {Rat2}_KS
+
+% B->A : Kb
+% A->B : {ACK.1.A.B}_Ks %confirm acceptance
+%
+% verify keys
+% SK = exp(Gb,Ea) or SK = exp(Ga,Ea)
+% A->B : {A.Rat}_SK
+% B->A : {B.Rat.Rbt}_SK
+% A->B : {B.Rbt}_SK
+%
+
+role alice(A, B : agent,
+	  G: text,
+      ACK: message,
+      F: hash_func,
+	  Ks: symmetric_key,
+	  SND,RCV: channel(dy))
+
+played_by A def=
+	local State   : nat,
+	Ea: text,
+        Ga, Gb: message,
+	Kb,SK: symmetric_key, 
+	Rb, Rat, Rbt : text,
+    Rat2, Rbt2: text,
+    Rat3, Rbt3: text,
+ 	Commit: hash(message. message.text.symmetric_key),
+	Hb: hash(text)
+
+init State := 0
+
+transition
+
+1. State = 0 /\ RCV(start) 
+   =|>
+   State' := 2 /\ Ea' := new()
+	       /\ Ga' := exp(G,Ea')
+	       /\ SND(Ga')
+
+2. State = 2 /\ RCV(Gb'.Commit') 
+   =|>
+   State' := 4 /\ Rat' := new()
+	       /\ SND(Rat'.{F(ACK.Rat')}_Ks)
+
+3. State = 4 /\ RCV(Rbt'.Hb')
+	     /\ Hb' = F(Rat.Rbt')
+   =|>
+   State' := 6 /\ SND(ACK.{F(ACK.Rat.Rbt')}_Ks)
+
+
+4. State = 6 /\ RCV(Rb'.{Hb'.Rbt2'}_Ks)
+             /\ Hb' = F(Rb')
+   =|>
+   State' := 8 /\ Rat2':= new()
+              /\  SND({Rbt2'.Rat2'.F(Rb').A}_Ks)
+
+5. State = 8 /\ RCV({Rat2}_Ks)
+	         /\ RCV(Kb')
+             /\ Commit = F(Ga.Gb.Rb.Kb')
+   =|>
+State' := 10 /\ SND({ACK.1.A.B}_Ks)
+              /\ SK' := exp(Gb,Ea)
+              /\ Rat3':= new()
+              /\ SND({A.Rat3'}_SK)
+              /\ secret(Rat3',rat,{A,B})
+              /\ witness(A,B,bob_alice_rat,Rat3')
+
+6. State = 10 /\ RCV({B.Rat3.Rbt3'}_SK) 
+   =|>
+   State':= 12 /\ SND({B.Rbt3'}_SK)
+	      /\ request(A,B,alice_bob_rbt,Rbt3')
+	
+end role
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+role bob( B, A : agent,
+	  G: text,
+          ACK: message,
+	  F: hash_func,
+	  Ks: symmetric_key, 
+	  SND,RCV: channel(dy))
+
+played_by B def=
+	local State   : nat,
+	Eb: text,
+        Ga, Gb: message,
+	Kb,SK: symmetric_key, 
+	Rb, Rat, Rbt : text,
+        Rat2, Rbt2 : text,
+	Rat3, Rbt3 : text,
+ 	Commit: hash(message. message.text.symmetric_key),
+	Ha: hash(message.text),
+    Ha2: hash(message.text.symmetric_key),
+    Ha3: hash(text)
+
+ 	
+init
+	State := 1
+
+transition
+
+1. State = 1 /\  RCV(Ga') 
+   =|>
+   State' := 3 /\ Rb' := new()
+               /\ Kb' := new()
+	       /\ Eb' := new()
+	       /\ Gb' := exp(G,Eb')
+               /\ SK' := exp(Ga',Eb')
+               /\ Commit' := F(Ga'.Gb'.Rb'.Kb')
+	       /\ SND(Gb'.Commit')
+	
+2. State = 3 /\ RCV(Rat'.{Ha'}_Ks)
+   =|>
+   State' := 5 /\ Rbt' := new()
+	           /\ SND(Rbt'.F(Rat'.Rbt'))
+
+3. State = 5   /\ RCV(ACK.{Ha2'}_Ks)
+               /\ Ha2' = F(ACK.Rat.Rbt)
+               /\ Ha = F(ACK.Rat)
+   =|>
+   State':= 7  /\ Rbt2' :=new()
+               /\ SND(Rb.{F(Rb).Rbt2'}_Ks)  
+
+4. State = 7   /\ RCV({Rbt2.Rat2'.Ha3'.A}_Ks)
+	           /\ Ha3' = F(Rb)
+   =|>
+   State' := 9 /\ SND({Rat2'}_Ks)
+               /\ SND(Kb)
+
+5. State = 9   /\ RCV({ACK.1.A.B}_Ks)
+               /\ RCV({A.Rat3'}_SK)
+   =|>
+   State' := 11 /\ Rbt3' := new()
+              /\ SND({B.Rat3'.Rbt3'}_SK)
+              /\ secret(Rbt3',rbt,{A,B})
+              /\ witness(B,A,alice_bob_rbt,Rbt3')
+
+6. State = 11  /\ RCV({B.Rbt3}_SK)
+   =|>
+   State' := 13 /\ request(B,A,bob_alice_rat,Rat3)
+
+end role
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+role session(A,B : agent,
+	     G: text,
+         ACK: message,
+	     F: hash_func,
+	     Kab: symmetric_key)
+
+def=
+  local SA, RA, SB, RB: channel (dy)
+
+  composition
+     alice(A,B,G,ACK,F,Kab,SA,RA)
+  /\ bob  (B,A,G,ACK,F,Kab,SB,RB)
+
+end role
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+role environment() def=
+
+    const a, b          : agent,
+	g                   : text,
+	ack		    : message,
+	h           : hash_func,
+    kab         : symmetric_key,
+    rat, rbt,
+	alice_bob_rbt,
+	bob_alice_rat        : protocol_id
+ 
+    intruder_knowledge={a,b,g,h}
+
+
+   composition
+      session(a,b,g,ack,h,kab)
+   /\ session(a,i,g,ack,h,kab)
+   /\ session(i,b,g,ack,h,kab)
+
+end role
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+goal
+
+  secrecy_of rat, rbt
+  authentication_on alice_bob_rbt
+  authentication_on bob_alice_rat
+
+end goal
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+environment()
+
+
+
